@@ -1,5 +1,3 @@
-# cfg.py
-
 from typing import List, Optional
 from ast_nodes import *
 
@@ -8,16 +6,26 @@ class BasicBlock:
     def __init__(self, name: str):
         self.name = name
         self.statements: List[Stmt] = []
-        self.successors: List["BasicBlock"] = []
-        self.predecessors: List["BasicBlock"] = []
+        self.out_edges: List["CFGEdge"] = []
+        self.in_edges: List["CFGEdge"] = []
 
-    def add_stmt(self, stmt: Stmt):
-        self.statements.append(stmt)
+    def add_out_edge(self, edge: "CFGEdge") -> None:
+        self.out_edges.append(edge)
 
-    def add_successor(self, succ: "BasicBlock"):
-        if succ not in self.successors:
-            self.successors.append(succ)
-            succ.predecessors.append(self)
+    def add_in_edge(self, edge: "CFGEdge") -> None:
+        self.in_edges.append(edge)
+
+    # -------------------------
+    # Convenience views
+    # -------------------------
+
+    @property
+    def predecessors(self) -> list["BasicBlock"]:
+        return [e.src for e in self.in_edges]
+
+    @property
+    def successors(self) -> list["BasicBlock"]:
+        return [e.dst for e in self.out_edges]
 
     def __repr__(self):
         return f"<BB {self.name}>"
@@ -34,6 +42,18 @@ class ControlFlowGraph:
         self.blocks.append(bb)
         return bb
 
+class CFGEdge:
+    def __init__(
+        self,
+        src: BasicBlock,
+        dst: BasicBlock,
+        cond: Optional[Expr] = None,
+        assume_true: Optional[bool] = None
+    ):
+        self.src = src
+        self.dst = dst
+        self.cond = cond
+        self.assume_true = assume_true
 
 class CFGBuilder:
     def __init__(self):
@@ -62,7 +82,7 @@ class CFGBuilder:
         end = self._build_block(body, entry)
 
         if end is not None:
-            end.add_successor(exit_block)
+            self._connect(end, exit_block)
 
         return self.cfg
 
@@ -119,18 +139,18 @@ class CFGBuilder:
         For VarDecl / Assign / Print.
         Just add stmt to current block.
         """
-        current.add_stmt(stmt)
+        current.statements.append(stmt)
         return current
 
     def _build_return(self, stmt: ReturnStmt, current: BasicBlock) -> Optional[BasicBlock]:
         """
         Return terminates the current block.
         """
-        current.add_stmt(stmt)
+        current.statements.append(stmt)
 
         # connect this return directly to the function exit
         assert self.cfg is not None and self.cfg.exit is not None
-        current.add_successor(self.cfg.exit)
+        self._connect(current, self.cfg.exit)
 
         # no fall-through after return
         return None
@@ -138,7 +158,7 @@ class CFGBuilder:
 
     def _build_if(self, stmt: IfStmt, current: BasicBlock) -> Optional[BasicBlock]:
         # record the if statement in current block
-        current.add_stmt(stmt)
+        current.statements.append(stmt)
 
         assert self.cfg is not None
 
@@ -147,7 +167,8 @@ class CFGBuilder:
         join_block = self._new_block("if_join")
 
         # connect current → then
-        current.add_successor(then_block)
+        
+        self._connect(current, then_block, cond = stmt.condition, assume_true = True)
 
         # build then branch
         end_then = self._build_block(stmt.then_body, then_block)
@@ -155,22 +176,22 @@ class CFGBuilder:
         # handle else branch
         if stmt.else_body is not None:
             else_block = self._new_block("if_else")
-            current.add_successor(else_block)
+            self._connect(current, else_block, cond = stmt.condition, assume_true = False)
 
             end_else = self._build_block(stmt.else_body, else_block)
 
             # connect both ends to join if they fall through
             if end_then is not None:
-                end_then.add_successor(join_block)
+                self._connect(end_then, join_block)
             if end_else is not None:
-                end_else.add_successor(join_block)
+                self._connect(end_else, join_block)
 
         else:
             # no else: false path goes directly to join
-            current.add_successor(join_block)
+            self._connect(current, join_block, cond = stmt.condition, assume_true = False)
 
             if end_then is not None:
-                end_then.add_successor(join_block)
+                self._connect(end_then, join_block)
 
         return join_block
 
@@ -184,22 +205,22 @@ class CFGBuilder:
         after_block = self._new_block("while_after")
 
         # jump from current to condition
-        current.add_successor(cond_block)
+        self._connect(current, cond_block)
 
         # record the while statement in the condition block
-        cond_block.add_stmt(stmt)
+        cond_block.statements.append(stmt)
 
         # true branch → body
-        cond_block.add_successor(body_block)
+        self._connect(cond_block, body_block, cond = stmt.condition, assume_true = True)
         # false branch → after loop
-        cond_block.add_successor(after_block)
+        self._connect(cond_block, after_block, cond = stmt.condition, assume_true = False)
 
         # build loop body
         end_body = self._build_block(stmt.body, body_block)
 
         # body falls back to condition
         if end_body is not None:
-            end_body.add_successor(cond_block)
+            self._connect(end_body, cond_block)
 
         # control continues after the loop
         return after_block
@@ -214,3 +235,14 @@ class CFGBuilder:
         name = f"{prefix}_{self.block_id}"
         self.block_id += 1
         return self.cfg.new_block(name)
+    
+    def _connect(
+        self,
+        src: BasicBlock,
+        dst: BasicBlock,
+        cond: Expr | None = None,
+        assume_true: bool | None = None,
+    ) -> None:
+        edge = CFGEdge(src, dst, cond, assume_true)
+        src.add_out_edge(edge)
+        dst.add_in_edge(edge)

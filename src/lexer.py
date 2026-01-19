@@ -1,5 +1,3 @@
-# lexer.py
-
 from typing import List
 from tokens import Token, TokenType, KEYWORDS
 

@@ -1,12 +1,10 @@
-# pipeline.py
-
 from typing import List
 
 from lexer import Lexer
 from parser import Parser
 from semantic import SemanticAnalyzer, SemanticError
 from cfg import CFGBuilder
-from cfg_analysis import CFGReturnAnalyzer
+from cfg_analysis import *
 from ast_nodes import Program
 
 
@@ -14,8 +12,6 @@ class AnalysisResult:
     def __init__(self):
         self.errors: List[SemanticError] = []
 
-    def add_errors(self, errs: List[SemanticError]):
-        self.errors.extend(errs)
 
     def has_errors(self) -> bool:
         return len(self.errors) > 0
@@ -56,7 +52,7 @@ def analyze_source(source: str) -> AnalysisResult:
     # -------------------------
     sem = SemanticAnalyzer()
     sem_errors = sem.analyze(program)
-    result.add_errors(sem_errors)
+    result.errors.extend(sem_errors)
 
     # -------------------------
     # 4. CFG-based analyses
@@ -67,7 +63,6 @@ def analyze_source(source: str) -> AnalysisResult:
         try:
             cfg = CFGBuilder().build(fn.body)
             ret_analyzer = CFGReturnAnalyzer(cfg)
-
             if not ret_analyzer.function_always_returns():
                 result.errors.append(
                     SemanticError(
@@ -75,6 +70,28 @@ def analyze_source(source: str) -> AnalysisResult:
                         fn
                     )
                 )
+            
+            ua = CFGUnreachableAnalyzer(cfg)
+            for block in ua.unreachable_blocks():
+                for stmt in block.statements:
+                    result.errors.append(
+                        SemanticError("Unreachable code", stmt)
+                    )
+
+            da = CFGDefiniteAssignmentAnalyzer(cfg)
+            da.analyze()
+            da.check_uses()
+            result.errors.extend(da.errors)
+
+            ds = CFGDeadStoreAnalyzer(cfg)
+            ds.analyze()
+
+            for stmt in ds.dead_stores:
+                result.errors.append(
+                    SemanticError("Dead store", stmt)
+                )
+
+            
         except Exception as e:
             # internal compiler error in CFG phase
             print(f"CFG error in function '{fn.name}':", e)

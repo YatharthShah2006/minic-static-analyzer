@@ -166,23 +166,23 @@ print(x);
 ---
 
 #### Path-Sensitive Zero / Null Analysis
-Performs path-sensitive reasoning to detect unsafe operations involving zero or null values.
+
+Performs **path-sensitive abstract interpretation** to detect unsafe operations involving zero (or null-like) values using a control-flow graph.
 
 **Example**
-```c
-if (x != 0) {
-    y = 10 / x; // safe
-}
-```
 
-```c
-y = 10 / x; // warning: x may be zero
-```
+    if (x) {
+        y = 10 / x; // safe on this path (x is non-zero)
+    }
+
+    y = 10 / x; // warning: x may be zero
 
 **Technique**
-- Symbolic constraints tracked per control-flow path
-- Infeasible paths pruned during analysis
-- Errors reported only on feasible execution paths
+- Forward data-flow analysis over a **CFG with edge-annotated control flow**
+- Tracks abstract states (`ZERO`, `NONZERO`, `UNKNOWN`) per variable
+- **Refines abstract state on conditional branches** (e.g. `if (x)`, `if (!x)`, `while (x)`)
+- Conservatively merges states at control-flow join points
+- Reports errors only when an unsafe operation is **possible on some feasible execution path**
 
 ---
 
@@ -202,7 +202,7 @@ y = 10 / x; // warning: x may be zero
 git clone <repository-url>
 cd Static_Analyzer_for_MiniC
 ```
-
+a
 2. Run the analysis pipeline on a MiniC source file:
 ```bash
 python src/pipeline.py path/to/program.mc
@@ -225,7 +225,18 @@ This project is an exploration of how real-world compilers and static analyzers 
 
 ## Possible Extensions
 
-- Interprocedural analysis using function summaries
-- Abstract interpretation framework with pluggable lattices
-- Loop invariant detection
-- Optimization passes driven by analysis results
+The current design intentionally focuses on **sound, intraprocedural analysis** with a clean separation between CFG construction and analysis passes. The architecture naturally supports the following extensions:
+
+- **Interprocedural Analysis**  
+  Extend the analyzer across function boundaries using function summaries (e.g. return value properties, side effects). This would allow reasoning about safety properties across calls without inlining.
+
+- **General Abstract Interpretation Framework**  
+  Generalize the existing analyses into a reusable framework with pluggable abstract domains (lattices). This would enable adding new analyses (e.g. nullness, bounds, taint) with minimal changes to the core infrastructure.
+
+- **Loop Invariant and Widening Techniques**  
+  Improve precision and convergence in loops by adding loop invariants or widening/narrowing strategies, enabling more precise reasoning about values across iterations.
+
+- **Optimization-Oriented Analyses**  
+  Leverage existing analyses (definite assignment, dead store detection, CFG reasoning) to drive optimization passes such as dead code elimination or redundant assignment removal.
+
+These extensions build directly on the current CFG-based architecture and can be added incrementally without redesigning the core pipeline.
