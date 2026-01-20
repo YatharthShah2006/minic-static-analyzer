@@ -3,6 +3,7 @@ from typing import List
 from lexer import Lexer
 from parser import Parser
 from semantic import SemanticAnalyzer, SemanticError
+from program_semantic import ProgramSemanticChecker
 from cfg import CFGBuilder
 from cfg_analysis import *
 from ast_nodes import Program
@@ -53,6 +54,17 @@ def analyze_source(source: str) -> AnalysisResult:
     sem = SemanticAnalyzer()
     sem_errors = sem.analyze(program)
     result.errors.extend(sem_errors)
+
+    # -------------------------
+    # 3.5 Program-level semantics
+    # -------------------------
+    prog_checker = ProgramSemanticChecker()
+    prog_errors = prog_checker.check(program)
+    result.errors.extend(prog_errors)
+
+    # If main() is invalid or missing, stop here
+    if prog_errors:
+        return result
 
     # -------------------------
     # 4. CFG-based analyses
