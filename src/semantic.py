@@ -7,14 +7,27 @@ from ast_nodes import *
 # -------------------------
 # Diagnostics
 # -------------------------
+class Diagnostic:
+    """
+    Base class for all user-visible diagnostics.
+    Not an exception.
+    """
 
-class SemanticError:
-    def __init__(self, message: str, node: ASTNode):
+    def __init__(self, message: str):
         self.message = message
-        self.node = node   # ASTNode
 
     def __str__(self):
-        return f"{self.message} at {self.node.pos.line}:{self.node.pos.column}"
+        return self.message
+
+class SemanticError(Diagnostic):
+    def __init__(self, message: str, node=None):
+        super().__init__(message)
+        self.node = node
+
+    def __str__(self):
+        if self.node is not None and hasattr(self.node, "pos"):
+            return f"{self.message} at {self.node.pos}"
+        return self.message
 
 
 
@@ -193,9 +206,6 @@ class SemanticAnalyzer:
         # visit condition expression
         self._visit_expr(node.condition)
 
-        if node.condition.inferred_type != Type.BOOL:
-            self._error("Condition of if-statement must be bool", node.condition)
-
         # then-branch
         self._visit_block(node.then_body)
 
@@ -209,9 +219,6 @@ class SemanticAnalyzer:
         # visit condition expression
         self._visit_expr(node.condition)
 
-        if node.condition.inferred_type != Type.BOOL:
-            self._error("Condition of while-statement must be bool", node.condition)
-            
         # loop body
         self._visit_block(node.body)
 
@@ -277,19 +284,48 @@ class SemanticAnalyzer:
         node.inferred_type = sym.type
 
     def _visit_call_expr(self, node: CallExpr):
+        
+        # visit arguments
+        for arg in node.arguments:
+            self._visit_expr(arg)
+
         sym = self.scopes.lookup(node.fname)
         if sym is None:
             self._error(f"Call to undefined function '{node.fname}'", node)
             node.inferred_type = Type.INT
+            return
         elif sym.kind != SymbolKind.FUNC:
             self._error(f"'{node.fname}' is not a function", node)
             node.inferred_type = Type.INT
+            return
         else:
             node.inferred_type = sym.type   # return type
 
-        # visit arguments
-        for arg in node.arguments:
-            self._visit_expr(arg)
+        fn = sym.decl_node
+        assert isinstance(fn, FunctionDef)
+
+        if len(node.arguments) != len(fn.params):
+            self.errors.append(
+                SemanticError(
+                    f"Function '{node.fname}' expects {len(fn.params)} arguments, "
+                    f"but got {len(node.arguments)}",
+                    node
+                )
+            )
+        
+        min_len = min(len(node.arguments), len(fn.params))
+        for arg, param in zip(node.arguments[:min_len], fn.params[:min_len]):
+            if arg.inferred_type is None:
+                arg.inferred_type = Type.INT  # recovery
+            if self._map_type(param.type) != arg.inferred_type:
+                self.errors.append(
+                    SemanticError(
+                        f"Argument type mismatch: expected {param.type}, got {self._unmap_type(arg.inferred_type)}",
+                        arg
+                    )
+                )
+
+
 
             
     def _visit_binary(self, node: BinaryExpr):
@@ -343,7 +379,7 @@ class SemanticAnalyzer:
 
         if node.op == "-" and t == Type.INT:
             node.inferred_type = Type.INT
-        elif node.op == "!" and t == Type.BOOL:
+        elif node.op == "!" and (t == Type.BOOL or t == Type.INT):
             node.inferred_type = Type.BOOL
         else:
             self._error(f"Invalid operand type for '{node.op}'", node)
@@ -369,3 +405,9 @@ class SemanticAnalyzer:
             return Type.BOOL
         else:
             raise RuntimeError(f"Unknown type {t}")
+        
+    def _unmap_type(self, t: Type) -> str:
+        if t == Type.INT:
+            return "int"
+        else:
+            return "bool"

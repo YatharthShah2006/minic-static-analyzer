@@ -1,8 +1,8 @@
 from typing import List
-
-from lexer import Lexer
-from parser import Parser
-from semantic import SemanticAnalyzer, SemanticError
+import os
+from lexer import Lexer, LexerError
+from parser import Parser, ParseError
+from semantic import SemanticAnalyzer, SemanticError, Diagnostic
 from program_semantic import ProgramSemanticChecker
 from cfg import CFGBuilder
 from cfg_analysis import *
@@ -11,7 +11,7 @@ from ast_nodes import Program
 
 class AnalysisResult:
     def __init__(self):
-        self.errors: List[SemanticError] = []
+        self.errors: List[Diagnostic] = []
 
 
     def has_errors(self) -> bool:
@@ -26,6 +26,27 @@ class AnalysisResult:
 # Main pipeline
 # -------------------------
 
+def analyze_file(path: str) -> AnalysisResult:
+    with open(path) as f:
+        source = f.read()
+
+    return analyze_source(source)
+
+def collect_mc_files(path: str) -> list[str]:
+    mc_files = []
+
+    if os.path.isfile(path):
+        if path.endswith(".mc"):
+            mc_files.append(path)
+        return mc_files
+
+    for root, _, files in os.walk(path):
+        for name in files:
+            if name.endswith(".mc"):
+                mc_files.append(os.path.join(root, name))
+
+    return sorted(mc_files)
+
 def analyze_source(source: str) -> AnalysisResult:
     result = AnalysisResult()
 
@@ -34,8 +55,8 @@ def analyze_source(source: str) -> AnalysisResult:
     # -------------------------
     try:
         tokens = Lexer(source).tokenize()
-    except Exception as e:
-        print("Lexer error:", e)
+    except LexerError as e:
+        result.errors.append(Diagnostic(str(e)))
         return result
 
     # -------------------------
@@ -44,8 +65,8 @@ def analyze_source(source: str) -> AnalysisResult:
     try:
         parser = Parser(tokens)
         program: Program = parser.parse()
-    except Exception as e:
-        print("Parser error:", e)
+    except ParseError as e:
+        result.errors.append(Diagnostic(str(e)))
         return result
 
     # -------------------------
@@ -90,7 +111,7 @@ def analyze_source(source: str) -> AnalysisResult:
                         SemanticError("Unreachable code", stmt)
                     )
 
-            da = CFGDefiniteAssignmentAnalyzer(cfg)
+            da = CFGDefiniteAssignmentAnalyzer(cfg, fn.params)
             da.analyze()
             da.check_uses()
             result.errors.extend(da.errors)
@@ -102,6 +123,12 @@ def analyze_source(source: str) -> AnalysisResult:
                 result.errors.append(
                     SemanticError("Dead store", stmt)
                 )
+
+            null = CFGZeroAnalysis(cfg)
+            null.analyze()
+
+            for e in null.errors:
+                result.errors.append(e)
 
             
         except Exception as e:
@@ -117,21 +144,45 @@ def analyze_source(source: str) -> AnalysisResult:
 
 def main():
     import sys
+    import os
 
     if len(sys.argv) != 2:
-        print("Usage: python pipeline.py <source-file>")
+        print("Usage: python pipeline.py <file.mc | directory>")
         return
 
-    with open(sys.argv[1]) as f:
-        source = f.read()
+    path = sys.argv[1]
 
-    result = analyze_source(source)
+    mc_files = collect_mc_files(path)
 
-    if result.has_errors():
-        print("❌ Errors found:")
-        result.report()
-    else:
-        print("✅ No errors found.")
+    if not mc_files:
+        print("No .mc files found.")
+        return
+
+    total = 0
+    failed = 0
+
+    for file_path in mc_files:
+        total += 1
+        print(f"\n=== Analyzing {file_path} ===")
+
+        try:
+            result = analyze_file(file_path)
+        except Exception as e:
+            print("❌ Internal error:", e)
+            failed += 1
+            continue
+
+        if result.has_errors():
+            failed += 1
+            print("❌ Errors found:")
+            result.report()
+        else:
+            print("✅ No errors found.")
+
+    print("\n==============================")
+    print(f"Analyzed {total} file(s)")
+    print(f"Passed: {total - failed}")
+    print(f"Failed: {failed}")
 
 
 if __name__ == "__main__":

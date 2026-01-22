@@ -170,7 +170,7 @@ class Lexer:
 
             # single-line comments: //
             if ch == "/" and self._peek_next() == "/":
-                self._consume_while(lambda c: c != "\n" and self._is_at_end())
+                self._consume_while(lambda c: c != "\n")
                 continue
 
             break

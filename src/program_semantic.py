@@ -17,33 +17,22 @@ class ProgramSemanticChecker:
             )
             return errors   # fatal → stop early
 
-        if len(mains) > 1:
-            for fn in mains:
+        for main_fn in mains:
+            # Signature check (adjust if your AST differs)
+            if main_fn.return_type != "int":
                 errors.append(
                     SemanticError(
-                        "Multiple definitions of 'main'",
-                        fn
+                        "Function 'main' must return int",
+                        main_fn
                     )
                 )
-            return errors   # fatal
 
-        main_fn = mains[0]
-
-        # Signature check (adjust if your AST differs)
-        if main_fn.return_type != "int":
-            errors.append(
-                SemanticError(
-                    "Function 'main' must return int",
-                    main_fn
+            if len(main_fn.params) != 0:
+                errors.append(
+                    SemanticError(
+                        "Function 'main' must take no parameters",
+                        main_fn
+                    )
                 )
-            )
-
-        if len(main_fn.params) != 0:
-            errors.append(
-                SemanticError(
-                    "Function 'main' must take no parameters",
-                    main_fn
-                )
-            )
 
         return errors

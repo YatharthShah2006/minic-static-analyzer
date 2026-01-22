@@ -161,13 +161,13 @@ class CFGVarAccessHelper:
         return set()
 
 class CFGDefiniteAssignmentAnalyzer(CFGVarAccessHelper):
-    def __init__(self, cfg: ControlFlowGraph):
+    def __init__(self, cfg: ControlFlowGraph, params):
         self.cfg = cfg
+        self.params = {p.name for p in params}
 
         self.IN: Dict[BasicBlock, Set[str]] = {}
         self.OUT: Dict[BasicBlock, Set[str]] = {}
         self.errors: List[SemanticError] = []
-
     # -------------------------
     # Public API
     # -------------------------
@@ -191,7 +191,7 @@ class CFGDefiniteAssignmentAnalyzer(CFGVarAccessHelper):
 
         for b in self.cfg.blocks:
             if b == self.cfg.entry:
-                self.IN[b] = set()
+                self.IN[b] = set(self.params)
             else:
                 self.IN[b] = set(all_vars)
             self.OUT[b] = set()
@@ -245,65 +245,6 @@ class CFGDefiniteAssignmentAnalyzer(CFGVarAccessHelper):
     # -------------------------
     # Definite assignment: use-before-assign checking
     # -------------------------
-
-    def vars_read_in_expr(self, expr) -> set[str]:
-        if isinstance(expr, VarExpr):
-            return {expr.name}
-
-        if isinstance(expr, Literal):
-            return set()
-
-        if isinstance(expr, UnaryExpr):
-            return self.vars_read_in_expr(expr.right)
-
-        if isinstance(expr, BinaryExpr):
-            return (
-                self.vars_read_in_expr(expr.left)
-                | self.vars_read_in_expr(expr.right)
-            )
-
-        if isinstance(expr, CallExpr):
-            result = set()
-            for arg in expr.arguments:
-                result |= self.vars_read_in_expr(arg)
-            return result
-
-        return set()
-
-
-    def vars_read_in_stmt(self, stmt) -> set[str]:
-        if isinstance(stmt, Assign):
-            return self.vars_read_in_expr(stmt.value)
-
-        if isinstance(stmt, VarDecl):
-            if stmt.value is None:
-                return set()
-            return self.vars_read_in_expr(stmt.value)
-
-        if isinstance(stmt, PrintStmt):
-            return self.vars_read_in_expr(stmt.value)
-
-        if isinstance(stmt, ReturnStmt):
-            return self.vars_read_in_expr(stmt.value)
-
-        if isinstance(stmt, IfStmt):
-            return self.vars_read_in_expr(stmt.condition)
-
-        if isinstance(stmt, WhileStmt):
-            return self.vars_read_in_expr(stmt.condition)
-
-        return set()
-
-
-    def vars_written_in_stmt(self, stmt) -> set[str]:
-        if isinstance(stmt, Assign):
-            return {stmt.name}
-
-        if isinstance(stmt, VarDecl) and stmt.value is not None:
-            return {stmt.name}
-
-        return set()
-
 
     def check_uses(self):
         """
@@ -442,6 +383,12 @@ class CFGZeroAnalysis(CFGVarAccessHelper):
                     self.OUT[b] = out_state
                     changed = True
 
+        for b in self.cfg.blocks:
+            state = dict(self.IN[b])
+            for stmt in b.statements:
+                self._check_stmt(stmt, state)
+                self._apply_stmt(stmt, state)
+
     # -------------------------
     # Data-flow equations
     # -------------------------
@@ -450,7 +397,7 @@ class CFGZeroAnalysis(CFGVarAccessHelper):
         state: State | None = None
 
         for edge in block.in_edges:
-            pred_state: State = self.OUT[edge.src]
+            pred_state: State = dict(self.OUT[edge.src])
 
             if edge.cond is not None:
                 assert edge.assume_true is not None
@@ -473,7 +420,6 @@ class CFGZeroAnalysis(CFGVarAccessHelper):
         cur: State = dict(state)
 
         for stmt in block.statements:
-            self._check_stmt(stmt, cur)
             self._apply_stmt(stmt, cur)
 
         return cur
@@ -507,7 +453,7 @@ class CFGZeroAnalysis(CFGVarAccessHelper):
         return ZeroState.UNKNOWN
 
     # -------------------------
-    # Condition refinement (future use)
+    # Condition refinement
     # -------------------------
 
     def refine_on_condition(
@@ -516,7 +462,7 @@ class CFGZeroAnalysis(CFGVarAccessHelper):
         assume_true: bool,
         state: State
     ) -> State:
-        new_state: State = dict(state)
+        new_state: State = state
 
         if isinstance(cond, VarExpr):
             new_state[cond.name] = (
