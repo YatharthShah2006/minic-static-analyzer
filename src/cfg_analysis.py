@@ -193,8 +193,8 @@ class CFGDefiniteAssignmentAnalyzer(CFGVarAccessHelper):
             if b == self.cfg.entry:
                 self.IN[b] = set(self.params)
             else:
-                self.IN[b] = set(all_vars)
-            self.OUT[b] = set()
+                self.IN[b] = set()
+            self.OUT[b] = set(all_vars)
 
     def _fixed_point(self):
         changed = True
